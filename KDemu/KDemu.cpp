@@ -9,6 +9,9 @@
 #include <windows.h>
 #include <mutex>
 #include "UnicornEmu.hpp"
+
+
+
 void gdbServer(uc_engine* uc, uint64_t entry) {
 	HMODULE hDll = LoadLibrary(TEXT("udbserver.dll"));
 	if (!hDll) {
@@ -24,6 +27,7 @@ void gdbServer(uc_engine* uc, uint64_t entry) {
 	Udbserver(uc, 10098, entry);
 }
 
+// MOD_TEST
 void mainThread() {
 	printf("Unicorn version: %x\n", uc_version(NULL, NULL));
 	PEloader& peLoader = PEloader::GetInstance();
@@ -90,13 +94,6 @@ void mainThread() {
 	peLoader.map_kuser_shared_data();
 	peLoader.MapAllDriversFromKdmp();
 
-
-
-
-
-
-
-
 	uc_hook trace, traces, trace_mem, trace_nt, t;
 	Emu(uc)->hook_add(&trace_mem, UC_HOOK_MEM_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
 	Emu(uc)->hook_add(&trace_mem, UC_HOOK_INSN_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
@@ -112,8 +109,11 @@ void mainThread() {
 	}
 
 	for (auto object : peLoader.objectList) {
-		Emu(uc)->hook_add(&t, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)Unicorn::hook_access_object, (void*)object, object->address, object->address + object->size);
+		// MOD_TEST
+		// Emu(uc)->hook_add(&t, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)Unicorn::hook_access_object, (void*)object, object->address, object->address + object->size);
+		Emu(uc)->hook_add(&t, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)Unicorn::hook_access_object, (void*)object.get(), object->address, object->address + object->size);
 	}
+
 	Emu(uc)->hook_add(&t, UC_HOOK_CODE, Unicorn::register_hook, NULL, 1, 0);
 	bool KdDebuggerNotPresent = 1;
 	bool KdDebuggerEnabled = 0;
@@ -132,9 +132,7 @@ void mainThread() {
 
 	peLoader.ExecuteFromRip = peLoader.peFiles[0]->Entry;
 
-
 	uc_err err;
-
 	Logger::Log(true, ConsoleColor::DARK_GREEN, "entry: 0x%llx  0%llx \n", peLoader.peFiles[0]->Entry, peLoader.ExecuteFromRip);
 
 	while (true) {
@@ -174,14 +172,17 @@ void mainThread() {
 			}
 		}
 
-		Sleep(1000);	}
-
-
+		Sleep(1000);	
+	}
 }
 
 int main(int argc, char** argv, char** envp) {
 	PEloader& peLoader = PEloader::GetInstance();
-	peLoader.LoadDmp();
+	if (!peLoader.LoadDmp()) {
+		Logger::Log(true, RED, "Failed to load dump file");
+		return EXIT_FAILURE;
+	}
+
 	InitializeCriticalSection(&peLoader.cs);
 	DWORD s = GetCurrentThreadId();
 	HANDLE thread = CreateThread(nullptr, 8192, (LPTHREAD_START_ROUTINE)mainThread, 0, 0, nullptr);

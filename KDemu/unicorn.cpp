@@ -14,11 +14,7 @@ namespace {
 	constexpr size_t kPageSize = 0x1000;
 	inline bool match(const uint8_t* buf, uint32_t size, std::initializer_list<uint8_t> pattern) {
 		if (size < pattern.size()) return false;
-		size_t i = 0;
-		for (auto b : pattern) {
-			if (buf[i++] != b) return false;
-		}
-		return true;
+		return !std::memcmp(pattern.begin(), buf, pattern.size());
 	}
 
 	inline int32_t read_disp32_at(const uint8_t* buf, uint32_t size, uint32_t offset) {
@@ -35,7 +31,6 @@ namespace {
 		Logger::Log(true, ConsoleColor::DARK_GREEN, "%s 0x%llx \n", msg, addr);
 	}
 }
-
 
 Unicorn::Unicorn() {
 
@@ -666,6 +661,7 @@ bool Unicorn::hook_mem_invalid(uc_engine* uc, uc_mem_type type, uint64_t address
 void Unicorn::hook_access_object(uc_engine* uc, uc_mem_type type, uint64_t address, int size, int64_t value, void* user_data) {
 	Object* obj = (Object*)user_data;
 	uint64_t rip;
+
 	uc_reg_read(uc, UC_X86_REG_RIP, &rip);
 	switch (type) {
 	case UC_MEM_READ:
@@ -706,6 +702,7 @@ void Unicorn::hook_mem_write(uc_engine* uc, uc_mem_type type, uint64_t address, 
 	Logger::Log(true, 11, "RIP : 0x%llx Write in address: 0x%llx Value: %llx\n", addr, address, value);
 }
 
+// MOD_TEST
 void Unicorn::hook_File_func(uc_engine* uc, std::string fileName, std::string funcName, void(*func)(uc_engine*, uint64_t, uint32_t, void*)) {
 	for (auto& peFile : loader->peFiles) {
 		uint64_t Base = peFile->Base;

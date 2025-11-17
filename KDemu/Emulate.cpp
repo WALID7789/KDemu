@@ -1,9 +1,9 @@
 ﻿#include "Emulate.hpp"
 #include "UnicornEmu.hpp"
 #include "NtType.hpp"
+
 #include <bcrypt.h>
 #include <windows.h>
-
 #include <fstream>
 #include <conio.h>
 #include <iostream>
@@ -17,14 +17,14 @@
 #include <thread>
 #include <tlhelp32.h>
 #include <mutex>
+
 #pragma comment(lib, "bcrypt.lib")
 int checknumh = 0;
 
 PEloader* Emulate::loader = &PEloader::GetInstance();
 
-
+HookManager g_TmpHooks;
 uint64_t ramAddr;
-
 
 Emulate::Emulate(uc_engine* uc)
 {
@@ -65,7 +65,6 @@ uint64_t Emulate::HeapAlloc(uc_engine* uc, uint64_t size) {
 	return Emu(uc)->HeapAlloc(size);
 }
 uint64_t Emulate::HeapAlloc(uc_engine* uc, uint64_t size, bool show) {
-
 	auto emuc = Emu(uc);
 	return emuc->HeapAlloc(size, show);
 }
@@ -308,8 +307,6 @@ void Emulate::atol(uc_engine* uc, uint64_t address, uint32_t size, void* user_da
 	RetHook(uc);
 }
 void Emulate::ExAllocatePoolWithTag(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
-
-
 	auto emu = Emu(uc);
 	uint64_t rcx_value = emu->rcx();
 	int a1 = static_cast<int>(rcx_value & 0xFFFFFFFF);
@@ -321,6 +318,7 @@ void Emulate::ExAllocatePoolWithTag(uc_engine* uc, uint64_t address, uint32_t si
 	emu->rax(allocated_address);
 	RetHook(uc);
 }
+
 void Emulate::ExFreePoolWithTag(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "ExFreePoolWithTag\n");
 	auto emu = Emu(uc);
@@ -328,20 +326,12 @@ void Emulate::ExFreePoolWithTag(uc_engine* uc, uint64_t address, uint32_t size, 
     uint64_t tag = emu->rdx();
 	Logger::Log(true, ConsoleColor::DARK_GREEN, "called for address: 0x%llx , Tag : 0x%llx \n", free_address, tag);
 
-
-
-
-
-
-
-
-
-
 	emu->rax(0);
 	uint64_t rsp = emu->rsp();
 	dump_stack(uc, rsp - 8, 10);
 	RetHook(uc);
 }
+
 void Emulate::ExFreeHeapPool(uc_engine* uc, uint64_t address, uint32_t size, void* user_data)
 {
 	Logger::Log(true, ConsoleColor::RED, "ExFreeHeapPool \n");
@@ -364,25 +354,29 @@ void Emulate::ExFreePool(uc_engine* uc, uint64_t address, uint32_t size, void* u
 			Sleep(10);
 		}
 	}
+
 	auto emu = Emu(uc);
 	uint64_t allocated_address = emu->rcx();
     Logger::Log(true, ConsoleColor::RED, "ExFreePool : allocated_address = %llx \n", allocated_address);
 
-	auto it = loader->real_mem_map.find(allocated_address);
-	if (it == loader->real_mem_map.end()) {
+	// auto it = loader->real_mem_map.find(allocated_address);
+	if (!loader->real_mem_map.contains(allocated_address)/*it == loader->real_mem_map.end()*/) {
 		Logger::Log(true, ConsoleColor::RED, "Error: Attempted to free unallocated or invalid address: 0x%llx \n", allocated_address);
 		return;
 	}
+
 	emu->rax(0);
 	uint64_t rsp = emu->rsp();
 	if (loader->sysinfo_addr == allocated_address)
 		loader->sysinfo_addr = 0;
 	RetHook(uc);
+
 	for (auto& ti : loader->Threads) {
 		SetEvent(ti->Event);
 		loader->errorevent = nullptr;
 	}
 }
+
 void Emulate::IoCreateDevice(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "IoCreateDevice\n");
 	DRIVER_OBJECT driverObj;
@@ -1226,7 +1220,7 @@ void Emulate::_vswprintf_s(uc_engine* uc, uint64_t address, uint32_t size, void*
 			SetEvent(ti->Event);
 		}
 		loader->errorevent = nullptr;
-		};
+	};
 
 	Logger::Log(true, ConsoleColor::RED, L"_vswprintf_s\n");
 
@@ -1236,127 +1230,26 @@ void Emulate::_vswprintf_s(uc_engine* uc, uint64_t address, uint32_t size, void*
 	uint64_t format_ptr = emu->r8();
 	uint64_t va_args_ptr = emu->r9();
 
-	if (sizeInWords == 0 || sizeInWords > 0x100000) {
-		wchar_t zero = L'\0';
-		emu->write(buffer_ptr, &zero, sizeof(wchar_t));
-		emu->rax(static_cast<uint64_t>(-1));
-		RetHook(uc);
-		restore_threads();
-		return;
-	}
+	auto returnAddress = emu->qword(emu->rsp());
+	g_TmpHooks.add_temporary_hook(uc,
+		[](uc_engine* uc, uint64_t addr, uint32_t size, const std::vector<uint64_t>& savedArgs) {
+			auto emu = Emu(uc);
 
-	std::wstring format;
-	for (uint64_t addr = format_ptr;; addr += sizeof(wchar_t)) {
-		wchar_t ch = 0;
-		if (!emu->try_read(addr, &ch, sizeof(ch))) {
-			break;
-		}
-		format.push_back(ch);
-		if (ch == L'\0') {
-			break;
-		}
-	}
-	if (format.empty() || format.back() != L'\0') {
-		format.push_back(L'\0');
-	}
+			auto buffer_ptr = savedArgs.at(0);
 
-	std::vector<uint64_t> guest_args;
-	guest_args.reserve(32);
-	for (int i = 0; i < 64; ++i) {
-		uint64_t offset = va_args_ptr + static_cast<uint64_t>(i) * sizeof(uint64_t);
-		if (auto value = emu->try_read<uint64_t>(offset)) {
-			guest_args.push_back(*value);
-		}
-		else {
-			break;
-		}
-	}
-
-	std::wstringstream ws;
-	size_t arg_idx = 0;
-
-	for (size_t i = 0; i < format.size(); ++i) {
-		if (format[i] == L'%' && i + 1 < format.size()) {
-			size_t j = i + 1;
-			int zero_pad = 0;
-
-			if (j < format.size() && format[j] == L'0' && j + 1 < format.size() && iswdigit(format[j + 1])) {
-				j++;
-				while (j < format.size() && iswdigit(format[j])) {
-					zero_pad = zero_pad * 10 + (format[j] - L'0');
-					j++;
+			std::wstring result;
+			for (uint64_t addr = buffer_ptr;; addr += sizeof(wchar_t)) {
+				wchar_t ch = 0;
+				if (!emu->try_read(addr, &ch, sizeof(ch))) {
+					break;
 				}
+				result.push_back(ch);
+				if (ch == L'\0') break;
 			}
 
-			if (j + 1 < format.size() && format[j] == L'h' && format[j + 1] == L'u') {
-				if (arg_idx < guest_args.size()) {
-					uint16_t val = static_cast<uint16_t>(guest_args[arg_idx++]);
-					ws << std::setfill(L'0') << std::setw(zero_pad) << val;
-				}
-				i = j + 1;
-			}
-			else if (format[j] == L'u' && arg_idx < guest_args.size()) {
-				uint32_t val = static_cast<uint32_t>(guest_args[arg_idx++]);
-				ws << std::setfill(L'0') << std::setw(zero_pad) << val;
-				i = j;
-			}
-			else if (format[j] == L'X' && arg_idx < guest_args.size()) {
-				uint32_t val = static_cast<uint32_t>(guest_args[arg_idx++]);
-				ws << std::uppercase << std::hex << std::setfill(L'0') << std::setw(zero_pad) << val << std::dec;
-				i = j;
-			}
-			else if (format[j] == L'S' && arg_idx < guest_args.size()) {
-				char tmp[512] = {};
-				if (emu->try_read(guest_args[arg_idx++], tmp, sizeof(tmp))) {
-					std::string ansi_tmp(tmp);
-					std::wstring wide_tmp;
-					ANSIToUnicode(ansi_tmp, wide_tmp);
-					ws << wide_tmp.c_str();
-				}
-				i = j;
-			}
-			else if (format[j] == L's' && arg_idx < guest_args.size()) {
-				wchar_t tmp[512] = {};
-				if (emu->try_read(guest_args[arg_idx++], tmp, sizeof(tmp))) {
-					ws << tmp;
-				}
-				i = j;
-			}
-			else if ((format[j] == L'd' || format[j] == L'i') && arg_idx < guest_args.size()) {
-				int64_t val = static_cast<int64_t>(guest_args[arg_idx++]);
-				ws << std::setfill(L'0') << std::setw(zero_pad) << val;
-				i = j;
-			}
-			else if (format[j] == L'x' && arg_idx < guest_args.size()) {
-				int64_t val = static_cast<int64_t>(guest_args[arg_idx++]);
-				ws << std::hex << std::setfill(L'0') << std::setw(zero_pad) << val << std::dec;
-				i = j;
-			}
-			else {
-				ws << format[i];
-			}
-		}
-		else {
-			ws << format[i];
-		}
-	}
-
-	std::wstring result = ws.str();
-	size_t required = result.size() + 1;
-	if (required > sizeInWords) {
-		wchar_t zero = L'\0';
-		emu->write(buffer_ptr, &zero, sizeof(wchar_t));
-		emu->rax(static_cast<uint64_t>(-1));
-		RetHook(uc);
-		restore_threads();
-		return;
-	}
-
-	Logger::Log(true, ConsoleColor::RED, L"%ls\n", result.c_str());
-	emu->write(buffer_ptr, result.c_str(), required * sizeof(wchar_t));
-	emu->rax(static_cast<uint64_t>(result.size()));
-	RetHook(uc);
-	restore_threads();
+			Logger::Log(true, ConsoleColor::RED, L"%ls\n", result.c_str());
+		}, returnAddress, returnAddress + 1,
+		{ buffer_ptr, sizeInWords, format_ptr,  va_args_ptr });
 }
 
 void Emulate::_swprintf_s(uc_engine* uc, uint64_t address, uint32_t size, void* user_data)
@@ -1380,336 +1273,31 @@ void Emulate::_swprintf_s(uc_engine* uc, uint64_t address, uint32_t size, void* 
 
 	Logger::Log(true, ConsoleColor::RED, L"_swprintf_s\n");
 
-	auto emu_sw = Emu(uc);
-	uint64_t buffer_ptr = emu_sw->rcx();
-	uint64_t sizeInWords = emu_sw->rdx();
-	uint64_t format_ptr = emu_sw->r8();
+	auto emu = Emu(uc);
+	uint64_t buffer_ptr = emu->rcx();
+	uint64_t sizeInWords = emu->rdx();
+	uint64_t format_ptr = emu->r8();
 
-	if (sizeInWords == 0 || sizeInWords > 0x100000) {
-		wchar_t zero = L'\0';
-		emu_sw->write(buffer_ptr, &zero, sizeof(wchar_t));
-		emu_sw->rax(static_cast<uint64_t>(-1));
-		RetHook(uc);
-		restore_threads();
-		return;
-	}
+	auto returnAddress = emu->qword(emu->rsp());
+	g_TmpHooks.add_temporary_hook(uc,
+		[](uc_engine* uc, uint64_t addr, uint32_t size, const std::vector<uint64_t>& savedArgs) {
+			auto emu = Emu(uc);
+			auto buffer_ptr = savedArgs.at(0);
 
-	std::wstring format;
-	for (uint64_t addr = format_ptr;; addr += sizeof(wchar_t)) {
-		wchar_t ch = 0;
-		if (!emu_sw->try_read(addr, &ch, sizeof(ch))) {
-			break;
-		}
-		format.push_back(ch);
-		if (ch == L'\0') {
-			break;
-		}
-	}
-	if (format.empty() || format.back() != L'\0') {
-		format.push_back(L'\0');
-	}
-
-	std::vector<uint64_t> guest_args;
-	guest_args.reserve(16);
-	guest_args.push_back(emu_sw->r9());
-
-	uint64_t rsp = emu_sw->rsp();
-	for (int i = 0; i < 32; ++i) {
-		uint64_t val = 0;
-		if (!emu_sw->try_read(rsp + 0x28 + static_cast<uint64_t>(i) * 8, &val, sizeof(val))) {
-			break;
-		}
-		guest_args.push_back(val);
-	}
-
-	size_t arg_idx = 0;
-	auto next_arg = [&]() -> uint64_t {
-		if (arg_idx < guest_args.size()) {
-			return guest_args[arg_idx++];
-		}
-		return 0;
-		};
-
-	auto read_guest_cstring = [&](uint64_t addr) {
-		std::string str;
-		if (addr == 0) {
-			return str;
-		}
-		for (size_t offset = 0; offset < 0x2000; ++offset) {
-			char c = 0;
-			if (!emu_sw->try_read(addr + offset, &c, sizeof(c))) {
-				break;
-			}
-			if (c == '\0') {
-				break;
-			}
-			str.push_back(c);
-		}
-		return str;
-		};
-
-	std::wstring result;
-	result.reserve(format.size());
-
-	size_t i = 0;
-	while (i < format.size()) {
-		wchar_t ch = format[i];
-		if (ch == L'\0') {
-			break;
-		}
-		if (ch != L'%') {
-			result.push_back(ch);
-			++i;
-			continue;
-		}
-		if (i + 1 < format.size() && format[i + 1] == L'%') {
-			result.push_back(L'%');
-			i += 2;
-			continue;
-		}
-
-		size_t j = i + 1;
-		while (j < format.size()) {
-			wchar_t flagChar = format[j];
-			if (flagChar == L'-' || flagChar == L'+' || flagChar == L' ' || flagChar == L'#' || flagChar == L'0') {
-				++j;
-			}
-			else {
-				break;
-			}
-		}
-
-		while (j < format.size() && iswdigit(format[j])) {
-			++j;
-		}
-
-		if (j < format.size() && format[j] == L'.') {
-			++j;
-			while (j < format.size() && iswdigit(format[j])) {
-				++j;
-			}
-		}
-
-		size_t length_start = j;
-		if (j < format.size()) {
-			switch (format[j]) {
-			case L'h':
-				++j;
-				if (j < format.size() && format[j] == L'h') {
-					++j;
+			std::wstring result;
+			for (uint64_t addr = buffer_ptr;; addr += sizeof(wchar_t)) {
+				wchar_t ch = 0;
+				if (!emu->try_read(addr, &ch, sizeof(ch))) {
+					break;
 				}
-				break;
-			case L'l':
-				++j;
-				if (j < format.size() && format[j] == L'l') {
-					++j;
-				}
-				break;
-			case L'L':
-			case L'w':
-			case L'j':
-			case L'z':
-			case L't':
-				++j;
-				break;
-			case L'I':
-				++j;
-				if (j + 1 < format.size() && format[j] == L'6' && format[j + 1] == L'4') {
-					j += 2;
-				}
-				else if (j + 1 < format.size() && format[j] == L'3' && format[j + 1] == L'2') {
-					j += 2;
-				}
-				break;
-			default:
-				break;
+				result.push_back(ch);
+				if (ch == L'\0') break;
 			}
-		}
 
-		if (j >= format.size()) {
-			break;
-		}
-
-		wchar_t spec = format[j];
-		size_t spec_pos = j;
-		++j;
-		std::wstring token = format.substr(i, j - i);
-		std::wstring length_mod = format.substr(length_start, spec_pos - length_start);
-
-		auto append_with_token = [&](auto value) -> bool {
-			int needed = _scwprintf(token.c_str(), value);
-			if (needed < 0) {
-				return false;
-			}
-			std::vector<wchar_t> temp(static_cast<size_t>(needed) + 1, L'\0');
-			if (_snwprintf_s(temp.data(), temp.size(), _TRUNCATE, token.c_str(), value) < 0) {
-				return false;
-			}
-			result.append(temp.data());
-			return true;
-			};
-
-		auto length_equals = [&](const wchar_t* mod) -> bool {
-			return length_mod == mod;
-			};
-
-		bool handled = true;
-		switch (spec) {
-		case L'd':
-		case L'i': {
-			int64_t raw = static_cast<int64_t>(next_arg());
-			if (length_equals(L"ll") || length_equals(L"I64")) {
-				handled = append_with_token(static_cast<long long>(raw));
-			}
-			else if (length_equals(L"l")) {
-				handled = append_with_token(static_cast<long>(raw));
-			}
-			else if (length_equals(L"hh")) {
-				handled = append_with_token(static_cast<signed char>(raw));
-			}
-			else if (length_equals(L"h")) {
-				handled = append_with_token(static_cast<short>(raw));
-			}
-			else {
-				handled = append_with_token(static_cast<int>(raw));
-			}
-			break;
-		}
-		case L'u':
-		case L'o':
-		case L'x':
-		case L'X': {
-			uint64_t raw = next_arg();
-			if (length_equals(L"ll") || length_equals(L"I64")) {
-				handled = append_with_token(static_cast<unsigned long long>(raw));
-			}
-			else if (length_equals(L"l")) {
-				handled = append_with_token(static_cast<unsigned long>(raw));
-			}
-			else if (length_equals(L"hh")) {
-				handled = append_with_token(static_cast<unsigned char>(raw));
-			}
-			else if (length_equals(L"h")) {
-				handled = append_with_token(static_cast<unsigned short>(raw));
-			}
-			else {
-				handled = append_with_token(static_cast<unsigned int>(raw));
-			}
-			break;
-		}
-		case L'p': {
-			uint64_t raw = next_arg();
-			void* ptr_value = reinterpret_cast<void*>(raw);
-			handled = append_with_token(ptr_value);
-			break;
-		}
-		case L's': {
-			uint64_t ptr = next_arg();
-			const wchar_t* str_ptr = L"(null)";
-			std::wstring tmp;
-			if (ptr != 0) {
-				std::wstring guest;
-				read_null_unicode_string(uc, ptr, guest);
-				tmp = std::move(guest);
-				str_ptr = tmp.c_str();
-			}
-			handled = append_with_token(str_ptr);
-			break;
-		}
-		case L'S': {
-			uint64_t ptr = next_arg();
-			const char* str_ptr = "(null)";
-			std::string tmp;
-			if (ptr != 0) {
-				tmp = read_guest_cstring(ptr);
-				str_ptr = tmp.c_str();
-			}
-			handled = append_with_token(str_ptr);
-			break;
-		}
-		case L'c': {
-			uint64_t raw = next_arg();
-			wint_t ch_value = static_cast<wint_t>(raw);
-			handled = append_with_token(ch_value);
-			break;
-		}
-		case L'C': {
-			uint64_t raw = next_arg();
-			int ch_value = static_cast<int>(static_cast<unsigned char>(raw));
-			handled = append_with_token(ch_value);
-			break;
-		}
-		case L'f':
-		case L'F':
-		case L'e':
-		case L'E':
-		case L'g':
-		case L'G':
-		case L'a':
-		case L'A': {
-			uint64_t raw = next_arg();
-			double value = 0.0;
-			std::memcpy(&value, &raw, sizeof(value));
-			handled = append_with_token(value);
-			break;
-		}
-		case L'n': {
-			uint64_t dest = next_arg();
-			if (dest != 0) {
-				int64_t count = static_cast<int64_t>(result.size());
-				if (length_equals(L"ll") || length_equals(L"I64")) {
-					long long value = static_cast<long long>(count);
-					emu_sw->write(dest, &value, sizeof(value));
-				}
-				else if (length_equals(L"l")) {
-					long value = static_cast<long>(count);
-					emu_sw->write(dest, &value, sizeof(value));
-				}
-				else if (length_equals(L"hh")) {
-					signed char value = static_cast<signed char>(count);
-					emu_sw->write(dest, &value, sizeof(value));
-				}
-				else if (length_equals(L"h")) {
-					short value = static_cast<short>(count);
-					emu_sw->write(dest, &value, sizeof(value));
-				}
-				else {
-					int value = static_cast<int>(count);
-					emu_sw->write(dest, &value, sizeof(value));
-				}
-			}
-			handled = true;
-			break;
-		}
-		default:
-			handled = false;
-			break;
-		}
-
-		if (!handled) {
-			result.append(token);
-		}
-
-		i = j;
-	}
-
-	size_t required = result.size() + 1;
-	if (required > sizeInWords) {
-		wchar_t zero = L'\0';
-		emu_sw->write(buffer_ptr, &zero, sizeof(wchar_t));
-		emu_sw->rax(static_cast<uint64_t>(-1));
-		RetHook(uc);
-		restore_threads();
-		return;
-	}
-
-	emu_sw->write(buffer_ptr, result.c_str(), required * sizeof(wchar_t));
-	Logger::Log(true, ConsoleColor::RED, L"%ls\n", result.c_str());
-	emu_sw->rax(static_cast<uint64_t>(result.size()));
-	RetHook(uc);
-	restore_threads();
+			Logger::Log(true, ConsoleColor::RED, L"%ls\n", result.c_str());
+		}, returnAddress, returnAddress + 1,
+		{ buffer_ptr, sizeInWords, format_ptr });
 }
-
 
 void Emulate::KeInsertQueueApc(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "KeInsertQueueApc\n");
@@ -1718,6 +1306,7 @@ void Emulate::KeInsertQueueApc(uc_engine* uc, uint64_t address, uint32_t size, v
 	emu->rax(status);
 	RetHook(uc);
 }
+
 void Emulate::KeInitializeApc(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "KeInitializeApc\n");
 	auto emu = Emu(uc);
@@ -1727,7 +1316,6 @@ void Emulate::KeInitializeApc(uc_engine* uc, uint64_t address, uint32_t size, vo
 
 	RetHook(uc);
 }
-
 
 void Emulate::_vsnwprintf(uc_engine* uc, uint64_t address, uint32_t size, void* user_data)
 {
@@ -1740,114 +1328,33 @@ void Emulate::_vsnwprintf(uc_engine* uc, uint64_t address, uint32_t size, void* 
 			loader->errorevent = ti->Event;
 		}
 	}
-	auto emu_vsnw = Emu(uc);
-	uint64_t buffer_ptr = emu_vsnw->rcx();
-	uint64_t sizeInWords = emu_vsnw->rdx();
-	uint64_t format_ptr = emu_vsnw->r8();
-	uint64_t va_args_ptr = emu_vsnw->r9();
+	auto emu = Emu(uc);
+	uint64_t buffer_ptr = emu->rcx();
+	uint64_t sizeInWords = emu->rdx();
+	uint64_t format_ptr = emu->r8();
+	uint64_t va_args_ptr = emu->r9();
 
-	std::vector<uint64_t> guest_args;
-	for (int i = 0; i < 8; ++i) {
-		uint64_t val = 0;
-		val = emu_vsnw->read<uint64_t>(va_args_ptr + i * 8);
-		guest_args.push_back(val);
-	}
+	auto returnAddress = emu->qword(emu->rsp());
+	g_TmpHooks.add_temporary_hook(uc,
+		[](uc_engine* uc, uint64_t addr, uint32_t size, const std::vector<uint64_t>& savedArgs) {
+			auto emu = Emu(uc);
+			auto buffer_ptr = savedArgs.at(0);
 
-	std::wstring format;
-	for (uint64_t addr = format_ptr;; addr += sizeof(wchar_t)) {
-		wchar_t ch;
-		ch = emu_vsnw->read<wchar_t>(addr);
-		format.push_back(ch);
-		if (ch == L'\0') break;
-	}
-
-	std::wstringstream ws;
-	size_t arg_idx = 0;
-
-	for (size_t i = 0; i < format.size(); ++i) {
-		if (format[i] == L'%' && i + 1 < format.size()) {
-			size_t j = i + 1;
-			int zero_pad = 0;
-
-			if (format[j] == L'0' && iswdigit(format[j + 1])) {
-				j++;
-				while (j < format.size() && iswdigit(format[j])) {
-					zero_pad = zero_pad * 10 + (format[j] - L'0');
-					j++;
+			std::wstring result;
+			for (uint64_t addr = buffer_ptr;; addr += sizeof(wchar_t)) {
+				wchar_t ch = 0;
+				if (!emu->try_read(addr, &ch, sizeof(ch))) {
+					break;
 				}
+				result.push_back(ch);
+				if (ch == L'\0') break;
 			}
 
-			if (j + 1 < format.size() && format[j] == L'h' && format[j + 1] == L'u') {
-				if (arg_idx < guest_args.size()) {
-					uint16_t val = static_cast<uint16_t>(guest_args[arg_idx++]);
-					ws << std::setfill(L'0') << std::setw(zero_pad) << val;
-				}
-				i = j + 1;
-			}
-			else if (format[j] == L'u' && arg_idx < guest_args.size()) {
-				uint32_t val = static_cast<uint32_t>(guest_args[arg_idx++]);
-				ws << std::setfill(L'0') << std::setw(zero_pad) << val;
-				i = j;
-			}
-			else if (format[j] == L'X' && arg_idx < guest_args.size()) {
-				uint32_t val = static_cast<uint32_t>(guest_args[arg_idx++]);
-				ws << std::uppercase << std::hex << std::setfill(L'0') << std::setw(zero_pad) << val << std::dec;
-				i = j;
-			}
-			else if (format[j] == L'S' && arg_idx < guest_args.size()) {
-				char tmp[512] = {};
-				auto tmpData = emu_vsnw->read(guest_args[arg_idx++], sizeof(tmp));
-				memcpy(tmp, tmpData.data(), tmpData.size());
-				ws << tmp;
-				i = j;
-			}
-			else if (format[j] == L's' && arg_idx < guest_args.size()) {
-				wchar_t tmp[512] = {};
-				auto tmpData = emu_vsnw->read(guest_args[arg_idx++], sizeof(tmp));
-				memcpy(tmp, tmpData.data(), tmpData.size());
-				ws << tmp;
-				i = j;
-			}
-			else if ((format[j] == L'd' || format[j] == L'i') && arg_idx < guest_args.size()) {
-				int64_t val = static_cast<int64_t>(guest_args[arg_idx++]);
-				ws << std::setfill(L'0') << std::setw(zero_pad) << val;
-				i = j;
-			}
-			else if (format[j] == L'x' && arg_idx < guest_args.size()) {
-				int64_t val = static_cast<int64_t>(guest_args[arg_idx++]);
-				ws << std::hex << std::setfill(L'0') << std::setw(zero_pad) << val << std::dec;
-				i = j;
-			}
-			else {
-				ws << format[i];
-			}
-		}
-		else {
-			ws << format[i];
-		}
-	}
-	std::wstring result = ws.str();
-	std::string results;
-	UnicodeToANSI(result, results);
-	if (strcmp(results.c_str(), "\n") != 0) {
-		std::string s = results + " \n";
-		Logger::Log(true, ConsoleColor::RED, "_vsnwprintf\n");
-		Logger::Log(true, ConsoleColor::RED, s.c_str());
-	}
-
-	size_t write_len = sizeInWords;
-	emu_vsnw->write(buffer_ptr, result.c_str(), result.size());
-
-	int ret = ws.str().size();
-	emu_vsnw->rax(static_cast<uint64_t>(ret));
-
-
-	RetHook(uc);
-	for (auto& ti : loader->Threads) {
-		SetEvent(ti->Event);
-		loader->errorevent = nullptr;
-	}
+			Logger::Log(true, ConsoleColor::RED, L"%ls\n", result.c_str());
+		}, returnAddress, returnAddress + 1,
+		{ buffer_ptr, sizeInWords, format_ptr, va_args_ptr });
 }
+
 void Emulate::KeInitializeTimer(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "KeInitializeTimer\n");
 
@@ -1939,10 +1446,12 @@ void Emulate::ExCreateCallback(uc_engine* uc, uint64_t address, uint32_t size, v
 	Logger::Log(true, ConsoleColor::RED, "CallbackObject 0x%llx\n", fake_callback_object);
 	RetHook(uc);
 }
+
 void Emulate::DebugPrompt(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "DebugPrompt\n");
 	RetHook(uc);
 }
+
 void Emulate::DbgPrompt(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "DbgPrompt\n");
 	auto emu = Emu(uc);
@@ -1984,8 +1493,6 @@ void Emulate::ExAcquireRundownProtection(uc_engine* uc, uint64_t address, uint32
 	Logger::Log(true, ConsoleColor::RED, "Result = %s\n", (success ? "TRUE" : "FALSE"));
 	RetHook(uc);
 }
-
-
 
 void Emulate::_wcscpy_s(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "_wcscpy_s\n");
@@ -2336,6 +1843,7 @@ void Emulate::IoCreateFileEx(uc_engine* uc, uint64_t address, uint32_t size, voi
 
 void Emulate::wcscat_s(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "wcscat_s\n");
+
 	auto emu = Emu(uc);
 	uint64_t dest_addr = emu->rcx();
 
@@ -2356,7 +1864,19 @@ void Emulate::wcscat_s(uc_engine* uc, uint64_t address, uint32_t size, void* use
 		return;
 	}
 
-	dest_str += src_str;
+	auto returnAddress = emu->qword(emu->rsp());
+	g_TmpHooks.add_temporary_hook(uc,
+		[](uc_engine* uc, uint64_t addr, uint32_t size, const std::vector<uint64_t>& savedArgs) {
+			auto dest_addr = savedArgs.at(0);
+
+			std::wstring result;
+			read_null_unicode_string(uc, dest_addr, result);
+
+			Logger::Log(true, ConsoleColor::RED, L"%ls\n", result.c_str());
+		}, returnAddress, returnAddress + 1,
+		{ dest_addr });
+
+	/*dest_str += src_str;
 
 	emu->write(dest_addr, dest_str.c_str(), total_length * sizeof(wchar_t));
 
@@ -2364,7 +1884,7 @@ void Emulate::wcscat_s(uc_engine* uc, uint64_t address, uint32_t size, void* use
 	uint64_t success_code = 0;
 	emu->rax(success_code);
 
-	RetHook(uc);
+	RetHook(uc);*/
 }
 
 void Emulate::RtlMultiByteToUnicodeN(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
@@ -2497,6 +2017,7 @@ void Emulate::ZwOpenKey(uc_engine* uc, uint64_t address, uint32_t size, void* us
 	emu->rax(ret);
 	RetHook(uc);
 }
+
 void Emulate::ZwQueryValueKey(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "ZwQueryValueKey\n");
 	auto emu = Emu(uc);
@@ -2554,6 +2075,7 @@ void Emulate::ZwQueryValueKey(uc_engine* uc, uint64_t address, uint32_t size, vo
 	emu->rax(status);
 	RetHook(uc);
 }
+
 void Emulate::ZwCreateKey(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	Logger::Log(true, ConsoleColor::RED, "ZwCreateKey\n");
 	auto emu = Emu(uc);
@@ -3089,18 +2611,6 @@ void Emulate::NtQuerySystemInformation(uc_engine* uc, uint64_t address, uint32_t
 	Logger::Log(true, ConsoleColor::RED, "NtQuerySystemInformation\n");
 
 	Logger::Log(true, ConsoleColor::YELLOW, "SystemInformationClass: %llx Output Buffer Addr: 0x%llx\n", SystemInformationClass, SystemInformation);
-
-
-
-
-
-
-
-
-
-
-
-
 }
 
 void Emulate::IoWMIOpenBlock(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
@@ -3183,20 +2693,12 @@ void Emulate::__C_specific_handler(uc_engine* uc, uint64_t address, uint32_t siz
 	uint32_t exceptionCode = 0;
 	emu->try_read(ExceptionRecord, &exceptionCode, sizeof(exceptionCode));
 
-
-
-
-
-
-
 	Logger::Log(true, ConsoleColor::DARK_GREEN, "  ExceptionCode:    0x%llx \n", exceptionCode);
-
-
-
 
 	loader->ExecuteExceptionHandler = 1;
 	loader->LastException = exceptionCode;
 }
+
 void Emulate::KeInitializeEvent(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	auto emu = Emu(uc);
 	uint64_t event_ptr = emu->rcx();
@@ -3229,6 +2731,9 @@ void Emulate::KeInitializeEvent(uc_engine* uc, uint64_t address, uint32_t size, 
 
 	RetHook(uc);
 }
+
+// MOD_TEST
+
 int iws = 0;
 void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 	ti->threadId = GetCurrentThreadId();
@@ -3267,9 +2772,7 @@ void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 			threadEmu->write(KdDebuggerNotPresentaddress, &KdDebuggerNotPresent, sizeof(KdDebuggerNotPresent));
 			threadEmu->write(KdDebuggerEnabledaddress, &KdDebuggerEnabled, sizeof(KdDebuggerEnabled));
 		}
-
 	}
-
 
 	uc_err errU = uc_hook_add(ti->tuc, &trace_mem, UC_HOOK_MEM_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
 	errU = uc_hook_add(ti->tuc, &trace_mem, UC_HOOK_INSN_INVALID, (void*)Unicorn::hook_mem_invalid, NULL, 1, 0);
@@ -3285,7 +2788,9 @@ void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 		_uc.hook_File_func(ti->tuc, "t", pair.first, pair.second);
 	}
 	for (auto object : loader->objectList) {
-		uc_hook_add(ti->tuc, &t, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)Unicorn::hook_access_object, (void*)object, object->address, object->address + object->size);
+		// MOD_TEST
+		//uc_hook_add(ti->tuc, &t, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)Unicorn::hook_access_object, (void*)object, object->address, object->address + object->size);
+		uc_hook_add(ti->tuc, &t, UC_HOOK_MEM_READ | UC_HOOK_MEM_WRITE, (void*)Unicorn::hook_access_object, (void*)object.get(), object->address, object->address + object->size);
 	}
 
 	uc_hook_add(ti->tuc, &t, UC_HOOK_CODE, Unicorn::register_hook, NULL, 1, 0);
@@ -3303,7 +2808,6 @@ void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 	emu->try_read(rsp_MapBase, buffer.data(), buffer.size());
 	threadEmu->write(rsp_MapBase, buffer.data(), buffer.size());
 	threadEmu->rsp(rsp);
-
 
 	Logger::Log(true, ConsoleColor::RED, "TI routineStart: %llx\n", ti->routineStart);
 	for (auto& ti : loader->Threads) {
@@ -3333,8 +2837,6 @@ void Emulate::TrampolineThread(ThreadInfo_t* ti) {
 
 	return;
 }
-
-
 
 void Emulate::PsCreateSystemThread(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	auto emu = Emu(uc);
@@ -3383,7 +2885,6 @@ void Emulate::PsCreateSystemThread(uc_engine* uc, uint64_t address, uint32_t siz
 	uint64_t status = 0;
 	emu->rax(status);
 	RetHook(uc);
-
 }
 
 void Emulate::KeSetEvent(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
@@ -3400,6 +2901,7 @@ void Emulate::KeSetEvent(uc_engine* uc, uint64_t address, uint32_t size, void* u
 
 	RetHook(uc);
 }
+
 void Emulate::KeResetEvent(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	auto emu = Emu(uc);
 	uint64_t rcx = emu->rcx();
@@ -3415,7 +2917,8 @@ void Emulate::KeResetEvent(uc_engine* uc, uint64_t address, uint32_t size, void*
 	uint64_t result = static_cast<uint64_t>(previous_state);
 	emu->rax(result);
 
-	RetHook(uc);}
+	RetHook(uc);
+}
 
 void Emulate::KeCapturePersistentThreadState(uc_engine* uc, uint64_t address, uint32_t size, void* user_data) {
 	auto emu = Emu(uc);

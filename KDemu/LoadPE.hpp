@@ -1,6 +1,8 @@
 ﻿#ifndef PELOADER_HPP
 #define PELOADER_HPP
 #include "Global.h"
+#include "Debugger.h"
+
 #include "kdmp-parser/kdmp-parser.h"
 
 typedef struct ThreadInfo {
@@ -63,7 +65,14 @@ public:
 	void MapAllDriversFromKdmp();
 	std::unordered_map<uint32_t, std::pair<uint64_t, std::string>> MSRList;
 
+	// MOD_TEST
+	/*
 	std::vector<Object*> objectList;
+	*/
+
+	std::vector<std::shared_ptr<Object>> objectList;
+
+	Debugger_t debugger;
 
 	static const uint64_t Emu_file_Base = 0xfffff805dc9a0000;
 
@@ -104,18 +113,15 @@ public:
 
 	uc_context* ucContext = nullptr;
 
-	std::map<uint64_t, std::pair<void*, uint64_t>>  real_mem_map;
-	std::map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_read;
-	std::map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_read_write;
-	std::map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_all;
+	std::unordered_map<uint64_t, std::pair<void*, uint64_t>>  real_mem_map;
+	std::unordered_map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_read;
+	std::unordered_map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_read_write;
+	std::unordered_map<uint64_t, std::pair<void*, my_uc_prot>>  real_mem_map_type_all;
 
-
-
-	std::map<uint64_t, uint64_t> hook;
+	std::unordered_map<uint64_t, uint64_t> hook;
 	uint64_t ExecuteFromRip;
 	int ExecuteExceptionHandler = 0;
 	int LastException;
-
 
 	struct VirtualFile {
 		uint64_t handle;
@@ -144,8 +150,6 @@ public:
 		std::string FileName;
 	} PEfile_t;
 
-
-
 	std::vector<PEfile_t*> peFiles;
 	std::map<uint64_t, std::string> ntoskrnlRVA;
 
@@ -159,12 +163,11 @@ public:
 		IN ULONG64 EntryAddress
 	);
 
-
 	void InitProcessor();
 
 	void Init();
 
-	void LoadDmp();
+	[[nodiscard]] bool LoadDmp();
 
 	void map_kuser_shared_data();
 
@@ -175,7 +178,6 @@ public:
 	void FixImport(uint64_t baseAddr, LIEF::PE::Binary::it_imports imports);
 
 	bool LoadPE(const std::string path);
-
 
 	void LoadModule(std::string path, int type);
 };
